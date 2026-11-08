@@ -1,0 +1,9 @@
+{
+  "name": "lecture-scribe",
+  "version": "1.1.0",
+  "private": true,
+  "description": "Live lecture transcription with automatic notes, in a single HTML file.",
+  "scripts": {
+    "start": "node server.js"
+  }
+}

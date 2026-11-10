@@ -330,6 +330,11 @@
   .sep:hover { background: var(--accent); }
   .field { display: inline-flex; align-items: center; gap: 7px; color: var(--muted); font-size: 12.5px; white-space: nowrap; transition: color var(--transition-fast); }
   .field:hover { color: var(--ink); }
+  .toggle { cursor: pointer; user-select: none; }
+  .toggle input { width: 15px; height: 15px; margin: 0; accent-color: var(--accent); cursor: pointer; }
+  .toggle input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .toggle:has(input:disabled) { opacity: 0.55; cursor: not-allowed; }
+  .toggle:has(input:disabled) input { cursor: not-allowed; }
   select {
     font: 500 13.5px var(--font-ui);
     color: var(--ink);
@@ -550,6 +555,13 @@
   .line.flag:focus-visible { outline: 2px solid var(--accent); outline-offset: -4px; border-radius: var(--radius-sm); }
   .line.interim { color: var(--muted); font-style: italic; cursor: default; }
   .line.interim:hover { background: transparent; }
+  .line .orig {
+    display: block;
+    margin-top: 3px;
+    font: 400 12.5px/1.5 var(--font-ui);
+    color: var(--muted);
+    font-style: italic;
+  }
   mark {
     background: color-mix(in srgb, var(--hl), var(--surface));
     color: var(--ink);
@@ -802,6 +814,7 @@
         <option value="en-GB">English (UK)</option>
         <option value="en-AU">English (Australia)</option>
         <option value="fil-PH">Filipino</option>
+        <option value="ceb-PH" title="Chrome has no Bisaya speech model, so audio is recognized with the Filipino model. Expect rough text.">Bisaya (Cebuano)</option>
         <option value="es-ES">Spanish</option>
         <option value="fr-FR">French</option>
         <option value="de-DE">German</option>
@@ -812,6 +825,10 @@
         <option value="id-ID">Indonesian</option>
         <option value="hi-IN">Hindi</option>
       </select>
+    </label>
+    <label id="translateWrap" class="field toggle" for="translate" title="Translate each line to English with Chrome's on-device translator. Nothing is uploaded.">
+      <input id="translate" type="checkbox">
+      Translate to English
     </label>
     <button id="mark" class="btn btn-star" type="button" disabled>&#9733; Mark important</button>
     <span class="grow"></span>
@@ -968,7 +985,7 @@
   var DEF = /\b(is|are|was|were)\s+(defined as|called|known as|referred to as)\b|\bmeans?\b|\brefers? to\b|\bstands? for\b|\bis the (process|study|ability|measure|ratio|rate)\b/i;
   var TODO = /\b(exam|quiz|test|assignment|homework|deadline|due|submit|submission|report|project|reading|tomorrow|next week|next class|pasulit|takdang)\b/i;
 
-  var segments = [];        // { t, text, flag }
+  var segments = [];        // { t, text, en, lang, flag }
   var isSample = false;
   var rec = null, wantOn = false, running = false, session = 0;
   var startedAt = 0, elapsedBase = 0, tick = null, interim = '';
@@ -978,6 +995,11 @@
 
   var prefs = {};
   try { prefs = JSON.parse(localStorage.getItem(PREFS) || '{}') || {}; } catch (e) { prefs = {}; }
+
+  var TRANS_TARGET = 'en';
+  var translators = {};     // 'es|en' -> Promise<Translator|null>
+  var transPending = new Set();
+  var transWarned = {};
 
   /* ---------- helpers ---------- */
   function esc(s) {
@@ -1056,11 +1078,141 @@
     return m.map(function (x) { return x.trim(); }).filter(Boolean);
   }
 
+  /* ---------- translation (Chrome's on-device Translator API) ---------- */
+  function langBase(v) { return String(v || '').split('-')[0].toLowerCase(); }
+  function translationOn() { return !!($('translate') && $('translate').checked); }
+  function segmentLang(s) { return langBase((s && s.lang) || $('lang').value); }
+
+  /* The line, and the notes built from it, use the English text when it exists. */
+  function effective(s) { return translationOn() && s.en ? s.en : s.text; }
+
+  /* Chrome has no Bisaya speech model, so the Filipino model stands in. */
+  var RECOGNISER = { 'ceb-ph': 'fil-PH' };
+  function speechLang() {
+    var v = $('lang').value;
+    return RECOGNISER[v.toLowerCase()] || v;
+  }
+
+  function langLabel(base) {
+    var sel = $('lang');
+    for (var i = 0; i < sel.options.length; i++) {
+      if (langBase(sel.options[i].value) === base) return sel.options[i].text;
+    }
+    return base;
+  }
+
+  function translatedCount() {
+    var n = 0;
+    segments.forEach(function (s) { if (s.en) n += 1; });
+    return n;
+  }
+
+  function makeTranslator(src) {
+    if (src === TRANS_TARGET || !window.Translator) return Promise.resolve(null);
+    return Promise.resolve()
+      .then(function () {
+        return window.Translator.availability({ sourceLanguage: src, targetLanguage: TRANS_TARGET });
+      })
+      .then(function (state) {
+        if (state === 'unavailable') return null;
+        return window.Translator.create({
+          sourceLanguage: src,
+          targetLanguage: TRANS_TARGET,
+          monitor: function (m) {
+            m.addEventListener('downloadprogress', function (e) {
+              if (!e.total) return;
+              toast('Downloading the ' + langLabel(src) + ' translation pack (' +
+                Math.round((e.loaded / e.total) * 100) + '%). This happens once.');
+            });
+          }
+        });
+      })
+      .catch(function (err) {
+        logRec('translator failed · ' + src + '|' + TRANS_TARGET + ' · ' + (err && err.message));
+        return null;
+      });
+  }
+
+  function translatorFor(src) {
+    var key = src + '|' + TRANS_TARGET;
+    if (!translators[key]) {
+      translators[key] = makeTranslator(src).then(function (t) {
+        // A failure can mean the model has not downloaded yet; retry on the next
+        // user gesture instead of caching the miss.
+        if (!t) delete translators[key];
+        return t;
+      });
+    }
+    return translators[key];
+  }
+
+  function translationUnavailable(src) {
+    if (transWarned[src]) return;
+    transWarned[src] = true;
+    if (!window.Translator) {
+      toast('On-device translation needs desktop Chrome or Edge. The transcript stays in the spoken language.', true);
+    } else {
+      toast('Chrome has no on-device translator for ' + langLabel(src) + ' yet, so the notes stay in the spoken language.', true);
+    }
+  }
+
+  function translateSegments(list) {
+    if (!translationOn() || !list || !list.length) return;
+    list.forEach(function (seg) {
+      if (!seg || seg.en || transPending.has(seg)) return;
+      var src = segmentLang(seg);
+      if (src === TRANS_TARGET) return;
+      transPending.add(seg);
+      translatorFor(src).then(function (t) {
+        if (!t) {
+          transPending.delete(seg);
+          translationUnavailable(src);
+          return;
+        }
+        return t.translate(seg.text).then(function (out) {
+          transPending.delete(seg);
+          out = String(out || '').trim();
+          if (!out || segments.indexOf(seg) === -1) return;   // cleared while queued
+          seg.en = out;
+          save();
+          renderTranscript();
+          scheduleNotes();
+        });
+      }).catch(function (err) {
+        transPending.delete(seg);
+        logRec('translate failed · ' + (err && err.message));
+      });
+    });
+  }
+
+  function translateToggle() {
+    prefs.translate = $('translate').checked;
+    savePrefs();
+    if (!translationOn()) {
+      renderNotes();
+      if (segments.length) toast('Translation off. Showing the original transcript.');
+      return;
+    }
+    var src = langBase($('lang').value);
+    if (src === TRANS_TARGET) {
+      renderNotes();
+      toast('This lecture is already in English.');
+      return;
+    }
+    toast('Preparing on-device translation...');
+    translatorFor(src).then(function (t) {
+      if (!t) { translationUnavailable(src); renderNotes(); return; }
+      toast('Translating to English. Everything stays on this device.');
+      translateSegments(segments.slice());
+      renderNotes();
+    });
+  }
+
   /* ---------- notes engine (runs locally, no server) ---------- */
   function buildModel() {
     var units = [];
     segments.forEach(function (s) {
-      sentences(s.text).forEach(function (x) {
+      sentences(effective(s)).forEach(function (x) {
         units.push({ t: s.t, text: x, flag: !!s.flag, toks: tokens(x) });
       });
     });
@@ -1124,7 +1276,7 @@
     var defs = units.filter(function (u) { return DEF.test(u.text); });
     var todos = units.filter(function (u) { return TODO.test(u.text); });
     var words = 0;
-    segments.forEach(function (s) { words += (s.text.match(/\S+/g) || []).length; });
+    segments.forEach(function (s) { words += (effective(s).match(/\S+/g) || []).length; });
 
     return { units: units, keywords: keywords, kwSet: kwSet, sections: sections, defs: defs, todos: todos, words: words };
   }
@@ -1154,17 +1306,21 @@
     var near = box.scrollHeight - box.scrollTop - box.clientHeight < 90;
     var kw = model ? model.kwSet : null;
     var h = segments.map(function (s, i) {
+      var text = effective(s);
+      var orig = translationOn() && s.en ? s.text : '';
       return '<div class="line' + (s.flag ? ' flag' : '') + '" data-i="' + i + '" tabindex="0" role="button" aria-pressed="' + (s.flag ? 'true' : 'false') + '" title="Click to ' + (s.flag ? 'unmark' : 'mark') + ' as important">' +
-        '<time>' + fmt(s.t) + '</time><span>' + highlight(s.text, kw) + '</span></div>';
+        '<time>' + fmt(s.t) + '</time><span>' + highlight(text, kw) +
+        (orig ? '<span class="orig">' + esc(orig) + '</span>' : '') + '</span></div>';
     }).join('');
     if (interim) h += '<div class="line interim"><time></time><span>' + esc(interim) + '</span></div>';
     if (!h) h = emptyHtml('transcript');
     box.innerHTML = h;
     if (near) box.scrollTop = box.scrollHeight;
     var words = 0;
-    segments.forEach(function (s) { words += (s.text.match(/\S+/g) || []).length; });
+    segments.forEach(function (s) { words += (effective(s).match(/\S+/g) || []).length; });
     $('trMeta').textContent = segments.length
-      ? segments.length + ' ' + plural(segments.length, 'line', 'lines') + ' · ' + words + ' ' + plural(words, 'word', 'words')
+      ? segments.length + ' ' + plural(segments.length, 'line', 'lines') + ' · ' + words + ' ' + plural(words, 'word', 'words') +
+        (translationOn() && translatedCount() ? ' · English' : '')
       : 'empty';
   }
 
@@ -1210,7 +1366,8 @@
     var m = model || buildModel();
     var title = $('title').value.trim() || 'Lecture notes';
     var out = '# ' + title + '\n\n_' + new Date().toLocaleDateString() + ' · ' +
-      fmt(elapsed()) + ' · ' + m.words + ' words_\n\n';
+      fmt(elapsed()) + ' · ' + m.words + ' words' +
+      (translationOn() && translatedCount() ? ' · translated to English' : '') + '_\n\n';
     if (m.keywords.length) out += '## Key terms\n' + m.keywords.map(function (k) { return k.word; }).join(', ') + '\n\n';
     m.sections.forEach(function (sec) {
       out += '## ' + fmt(sec.start) + ' · ' + sec.title + '\n' +
@@ -1218,7 +1375,11 @@
     });
     if (m.defs.length) out += '## Definitions\n' + m.defs.map(function (u) { return '- ' + u.text; }).join('\n') + '\n\n';
     if (m.todos.length) out += '## Reminders\n' + m.todos.map(function (u) { return '- [ ] ' + u.text; }).join('\n') + '\n\n';
-    out += '## Full transcript\n' + segments.map(function (s) { return '[' + fmt(s.t) + '] ' + s.text; }).join('\n') + '\n';
+    out += '## Full transcript\n' + segments.map(function (s) {
+      var primary = effective(s);
+      var orig = translationOn() && s.en ? '  _(original: ' + s.text + ')_' : '';
+      return '[' + fmt(s.t) + '] ' + primary + orig;
+    }).join('\n') + '\n';
     return out;
   }
 
@@ -1226,9 +1387,11 @@
   function addSegment(text) {
     text = (text || '').trim();
     if (!text) return;
-    segments.push({ t: Math.round(elapsed()), text: cap(text), flag: false });
+    var seg = { t: Math.round(elapsed()), text: cap(text), lang: $('lang').value, en: '', flag: false };
+    segments.push(seg);
     save();
     scheduleNotes();
+    translateSegments([seg]);
     $('mark').disabled = false;
   }
 
@@ -1355,7 +1518,10 @@
     rec = r;
     r.continuous = true;
     r.interimResults = true;
-    r.lang = $('lang').value;
+    r.lang = speechLang();
+    if (translationOn() && langBase($('lang').value) !== TRANS_TARGET) {
+      translatorFor(langBase($('lang').value));
+    }
     r.onstart = function () {
       if (my !== session) return;
       logRec('recognition started · lang=' + r.lang);
@@ -1460,6 +1626,8 @@
   function changeLang() {
     prefs.lang = $('lang').value;
     savePrefs();
+    var base = langBase($('lang').value);
+    if (translationOn() && base !== TRANS_TARGET) translatorFor(base);
     var label = $('lang').options[$('lang').selectedIndex].text;
     if (!running) { save(); toast('Language set to ' + label + '.'); return; }
     stopRec(true);
@@ -1508,12 +1676,16 @@
     if (!units.length) { setStatus('There was no text to import.', true); return; }
     if (isSample) clearSample();
     var base = segments.length ? segments[segments.length - 1].t + 30 : 0;
-    units.forEach(function (p, i) { segments.push({ t: base + i * 8, text: p, flag: false }); });
+    var added = units.map(function (p, i) {
+      return { t: base + i * 8, text: p, lang: $('lang').value, en: '', flag: false };
+    });
+    segments = segments.concat(added);
     elapsedBase = segments[segments.length - 1].t;
     $('clock').textContent = fmt(elapsedBase);
     $('mark').disabled = false;
     save();
     renderNotes();
+    translateSegments(added);
     setUi(false);
     setStatus('Imported ' + units.length + ' ' + plural(units.length, 'sentence', 'sentences') + ' — notes are ready.');
   }
@@ -1620,6 +1792,17 @@
 
   $('lang').addEventListener('change', changeLang);
 
+  $('translate').addEventListener('change', translateToggle);
+
+  /* Browsers need a user gesture to fetch a translation pack, so translate a
+     restored session on the first click rather than at load. */
+  var backlogDone = false;
+  document.addEventListener('pointerdown', function () {
+    if (backlogDone || !translationOn()) return;
+    backlogDone = true;
+    translateSegments(segments.slice());
+  });
+
   function setImport(open) {
     $('importPanel').hidden = !open;
     $('importBtn').setAttribute('aria-expanded', open ? 'true' : 'false');
@@ -1694,6 +1877,7 @@
     interim = '';
     isSample = false;
     model = null;
+    transPending.clear();
     running = false;
     clearInterval(tick);
     tick = null;
@@ -1737,6 +1921,13 @@
   }
 
   if (location.protocol === 'file:') $('fileBanner').hidden = false;
+
+  if (!window.Translator) {
+    $('translate').disabled = true;
+    $('translateWrap').title = 'On-device translation needs desktop Chrome 138+ or Edge 148+. The transcript and notes stay in the spoken language.';
+  } else if (prefs.translate) {
+    $('translate').checked = true;
+  }
 
   if (!SR) {
     $('rec').disabled = true;

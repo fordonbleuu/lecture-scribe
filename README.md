@@ -26,6 +26,8 @@ Drag this folder onto Netlify Drop, or push it to GitHub Pages. You get an `http
 
 - Press **Start recording** and allow the microphone.
 - Pick the lecture language first. Changing it while recording restarts recognition in the new language.
+- Tick **Translate to English** to translate each line as it is finalized. The English text is what the notes are built from, and the original line stays visible underneath it.
+- **Bisaya (Cebuano)** is in the language list, but Chrome has no Bisaya speech model, so its audio is recognized with the Filipino model. Expect rough text.
 - Click any transcript line, or press **Mark important**, to force a line into the notes.
 - **Import transcript** builds notes from pasted text or a `.txt`, `.vtt` or `.srt` file.
 - **Copy notes** or **Download .md** to keep them.
@@ -44,6 +46,12 @@ Everything runs locally in the browser:
 - **Reminders** — sentences about exams, quizzes, deadlines and submissions.
 
 The notes are a study aid, not a substitute for listening. Review them before relying on them.
+
+## Translation
+
+**Translate to English** uses Chrome's on-device Translator API. It needs desktop Chrome 138+ or Edge 148+, and the first use of a language downloads a translation pack (a few MB) once. The text never leaves the device, so the app's privacy promise still holds.
+
+Chrome's translator covers Arabic, Bengali, Bulgarian, Chinese, Croatian, Czech, Danish, Dutch, English, Finnish, French, German, Greek, Hebrew, Hindi, Hungarian, Indonesian, Italian, Japanese, Kannada, Korean, Lithuanian, Marathi, Norwegian, Polish, Portuguese, Romanian, Russian, Slovak, Slovenian, Spanish, Swedish, Tamil, Telugu, Thai, Turkish, Ukrainian and Vietnamese. It does **not** cover Filipino or Bisaya yet, so a Bisaya lecture keeps its recognized text in the notes instead of being translated; the app tells you when a language is unavailable. Translation only applies while the box is ticked — untick it to see the original transcript and notes again.
 
 ## Troubleshooting
 

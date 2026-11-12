@@ -776,6 +776,112 @@
     *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; }
     .line:hover { background: transparent; }
   }
+
+  /* ---------- Landing page ---------- */
+  .landing {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    display: grid;
+    place-items: center;
+    background: var(--bg);
+    color: var(--ink);
+    backdrop-filter: blur(6px);
+    transition: opacity 0.4s ease, visibility 0.4s ease;
+  }
+  .landing.hidden {
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+  }
+  .landing-card {
+    width: min(700px, 92vw);
+    padding: 48px 40px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 24px;
+    box-shadow: var(--shadow-lg);
+    text-align: center;
+    animation: landFade 0.5s ease;
+  }
+  @keyframes landFade {
+    from { opacity: 0; transform: translateY(16px); }
+    to { opacity: 1; transform: none; }
+  }
+  .landing .brand-mark {
+    width: 48px; height: 48px; flex: none;
+    border-radius: 14px;
+    background: linear-gradient(145deg, var(--accent), var(--accent-hover));
+    margin: 0 auto 16px;
+    box-shadow: 0 4px 16px -4px var(--accent);
+  }
+  .landing h1 {
+    margin: 0 0 10px;
+    font: 700 32px var(--font-display);
+    letter-spacing: -0.02em;
+  }
+  .landing p {
+    margin: 0 0 26px;
+    font: 400 16px/1.7 var(--font-read);
+    color: var(--muted);
+  }
+  .landing-features {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin: 0 0 30px;
+    text-align: left;
+  }
+  .landing-features li {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font: 400 14.5px/1.6 var(--font-ui);
+    color: var(--ink);
+    list-style: none;
+    padding: 6px 0;
+  }
+  .landing-features li::before {
+    content: "✓";
+    flex: none;
+    color: var(--accent);
+    font-weight: 700;
+  }
+  .landing-actions {
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+  .landing-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    height: 46px;
+    padding: 0 24px;
+    border: 0;
+    border-radius: 14px;
+    font: 600 15px var(--font-ui);
+    cursor: pointer;
+    transition: transform 0.1s ease, box-shadow 0.2s ease;
+  }
+  .landing-btn-primary {
+    background: linear-gradient(180deg, var(--accent), var(--accent-hover));
+    color: #fff;
+    box-shadow: 0 8px 24px -8px var(--accent);
+  }
+  .landing-btn-primary:hover { transform: translateY(-2px); box-shadow: 0 12px 28px -10px var(--accent); }
+  .landing-btn-ghost {
+    background: var(--surface-2);
+    color: var(--ink);
+    border: 1px solid var(--line);
+  }
+  .landing-btn-ghost:hover { background: var(--surface-muted); }
+  .landing-note {
+    margin-top: 22px;
+    font: 500 12.5px var(--font-ui);
+    color: var(--muted);
+  }
 </style>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/docx/8.1.0/docx.min.js"></script>
@@ -787,6 +893,24 @@
   <div class="glow-accent" style="width: 200px; height: 200px; left: 50%; top: 50%; background: var(--accent); opacity: 0.1;"></div>
 
   <div class="app">
+  <div id="landing" class="landing">
+    <div class="landing-card">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <h1>Lecture Scribe</h1>
+      <p>Live lecture transcription with automatic notes — built entirely in your browser. Nothing is uploaded.</p>
+      <ul class="landing-features">
+        <li>Record and transcribe as the lecture happens</li>
+        <li>Automatic key terms, section summaries, definitions &amp; reminders</li>
+        <li>Export notes as Markdown, PDF or Word</li>
+        <li>Everything stays private on this device</li>
+      </ul>
+      <div class="landing-actions">
+        <button id="landingEnter" class="landing-btn landing-btn-primary" type="button">Get started</button>
+        <button id="landingSkip" class="landing-btn landing-btn-ghost" type="button">Skip</button>
+      </div>
+      <p class="landing-note" id="landingNote"></p>
+    </div>
+  </div>
   <header class="topbar">
     <div class="brand"><span class="brand-mark" aria-hidden="true"></span>Lecture Scribe</div>
     <span class="brand-sub">live notes, in your browser</span>
@@ -2034,7 +2158,27 @@
     if (e.key === 'Escape' && !$('importPanel').hidden) { setImport(false); $('importBtn').focus(); }
   });
 
-  /* ---------- start up ---------- */
+  /* ---------- landing page ---------- */
+function initWelcome() {
+  var landing = $('landing');
+  var enter = $('landingEnter');
+  var skip = $('landingSkip');
+  var seen = false;
+  try { seen = localStorage.getItem('lecture-scribe-welcome') === '1'; } catch (e) {}
+  function hide() {
+    landing.classList.add('hidden');
+    setTimeout(function () { landing.style.display = 'none'; }, 400);
+  }
+  function proceed() {
+    try { localStorage.setItem('lecture-scribe-welcome', '1'); } catch (e) {}
+    hide();
+  }
+  if (seen) { hide(); }
+  enter.addEventListener('click', proceed);
+  skip.addEventListener('click', proceed);
+}
+
+/* ---------- start up ---------- */
   (function selectLang(pref) {
     var sel = $('lang'), lower = String(pref || '').toLowerCase();
     for (var i = 0; i < sel.options.length; i++) {
@@ -2072,6 +2216,7 @@
     setStatus('Live transcription needs Chrome, Edge or Safari. You can still import a transcript to build notes.', true);
   }
 
+  initWelcome();
   setUi(false);
   renderNotes();
 })();

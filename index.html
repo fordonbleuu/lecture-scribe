@@ -1088,7 +1088,7 @@
         <option value="en-GB">English (UK)</option>
         <option value="en-AU">English (Australia)</option>
         <option value="fil-PH">Filipino</option>
-        <option value="ceb-PH" title="Chrome has no Bisaya speech model, so audio is recognized with the Filipino model. Expect rough text.">Bisaya (Cebuano)</option>
+        <option value="ceb-PH">Bisaya (Cebuano) · uses Filipino model</option>
         <option value="es-ES">Spanish</option>
         <option value="fr-FR">French</option>
         <option value="de-DE">German</option>
@@ -1129,6 +1129,11 @@
   <div id="sampleBanner" class="banner" hidden>
     <span>This is a sample lecture so you can see how the notes work.</span>
     <button id="freshBtn" class="banner-btn" type="button">Start fresh</button>
+  </div>
+
+  <div id="cebuanoBanner" class="banner banner-err" hidden>
+    <span><strong>Heads up:</strong> Chrome and Edge don’t have a Cebuano/Bisaya speech model, so this uses the Filipino (Tagalog) model. Results will be inaccurate. For better Cebuano notes, use <em>Import transcript</em> with a .txt, .vtt or .srt file instead.</span>
+    <button id="cebuanoClose" class="banner-x" type="button" aria-label="Dismiss message">&times;</button>
   </div>
 
   <section id="importPanel" class="import" aria-label="Import a transcript" hidden>
@@ -1362,12 +1367,13 @@
   /* The line, and the notes built from it, use the English text when it exists. */
   function effective(s) { return translationOn() && s.en ? s.en : s.text; }
 
-  /* Chrome has no Bisaya speech model, so the Filipino model stands in. */
+  /* Chrome has no Cebuano/Bisaya speech model, so the Filipino model stands in. */
   var RECOGNISER = { 'ceb-ph': 'fil-PH' };
   function speechLang() {
     var v = $('lang').value;
     return RECOGNISER[v.toLowerCase()] || v;
   }
+  function isCebuano() { return langBase($('lang').value) === 'ceb'; }
 
   function langLabel(base) {
     var sel = $('lang');
@@ -2035,12 +2041,19 @@
     var base = langBase($('lang').value);
     if (translationOn() && base !== TRANS_TARGET) translatorFor(base);
     var label = $('lang').options[$('lang').selectedIndex].text;
+    toggleCebuanoBanner();
     if (!running) { save(); toast('Language set to ' + label + '.'); return; }
     stopRec(true);
     setTimeout(function () {
       startRec();
       toast('Language set to ' + label + '.');
     }, 300);
+  }
+
+  function toggleCebuanoBanner() {
+    var el = $('cebuanoBanner');
+    if (!el) return;
+    if (isCebuano()) { el.hidden = false; } else { el.hidden = true; }
   }
 
   /* ---------- import / export ---------- */
@@ -2218,6 +2231,7 @@
   $('importClose').addEventListener('click', function () { setImport(false); $('importBtn').focus(); });
   $('noticeClose').addEventListener('click', hideNotice);
   $('noticeRetry').addEventListener('click', function () { hideNotice(); startRec(); });
+  $('cebuanoClose').addEventListener('click', function () { $('cebuanoBanner').hidden = true; });
   $('freshBtn').addEventListener('click', function () {
     clearSample();
     setStatus('Ready for your own lecture.');
@@ -2365,6 +2379,7 @@ function initWelcome() {
   }
 
   initWelcome();
+  toggleCebuanoBanner();
   setUi(false);
   renderNotes();
 })();

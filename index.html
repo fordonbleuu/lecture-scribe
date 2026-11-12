@@ -777,6 +777,8 @@
     .line:hover { background: transparent; }
   }
 </style>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/docx/8.1.0/docx.min.js"></script>
 </head>
 <body>
   <div class="float-particle" style="width: 80px; height: 80px; left: -10%; top: -10%; background: var(--accent);"></div>
@@ -836,6 +838,8 @@
       <button id="importBtn" class="btn" type="button" aria-expanded="false" aria-controls="importPanel">Import transcript</button>
       <button id="copyBtn" class="btn" type="button">Copy notes</button>
       <button id="mdBtn" class="btn" type="button">Download .md</button>
+      <button id="pdfBtn" class="btn" type="button">Download .pdf</button>
+      <button id="docxBtn" class="btn" type="button">Download .docx</button>
       <button id="clearBtn" class="btn btn-danger" type="button">Clear</button>
     </div>
   </section>
@@ -953,7 +957,7 @@
         </button>
         <div class="faq-answer" id="faq-6">
           <div class="faq-answer-inner">
-            <p>Yes. Use <em>Copy notes</em> to put formatted notes on your clipboard, or <em>Download .md</em> for a Markdown file you can open in Notion, Obsidian, Word or anywhere else.</p>
+            <p>Yes. Use <em>Copy notes</em> to put formatted notes on your clipboard, or <em>Download .md</em>, <em>Download .pdf</em> or <em>Download .docx</em> to save your notes as a Markdown, PDF or Word file.</p>
           </div>
         </div>
       </div>
@@ -1383,6 +1387,136 @@
     return out;
   }
 
+  function toPdf() {
+    if (!segments.length) { setStatus('There are no notes to download yet.', true); return; }
+    var m = model || buildModel();
+    var title = $('title').value.trim() || 'Lecture notes';
+    var name = ($('title').value.trim() || 'lecture-notes').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'lecture-notes';
+    var jsPDFLib = window.jsPDF || (window.jspdf && window.jspdf.jsPDF);
+    var doc = new jsPDFLib();
+    var pageW = doc.internal.pageSize.getWidth();
+    var pageH = doc.internal.pageSize.getHeight();
+    var margin = 20;
+    var y = margin;
+    var lh = 6.5;
+
+    function checkPage(need) {
+      if (y + need > pageH - margin) { doc.addPage(); y = margin; }
+    }
+
+    function heading(text) {
+      checkPage(lh * 2);
+      doc.setFontSize(13);
+      doc.setTextColor(13, 124, 116);
+      doc.text(text, margin, y);
+      y += lh * 1.8;
+      doc.setFontSize(10);
+      doc.setTextColor(30, 41, 59);
+    }
+
+    function body(text) {
+      checkPage(lh * 2);
+      var lines = doc.splitTextToSize(text, pageW - margin * 2);
+      doc.text(lines, margin, y);
+      y += lines.length * lh + lh * 0.6;
+    }
+
+    function bullet(text, star) {
+      checkPage(lh * 2);
+      var prefix = (star ? '\u2605 ' : '- ') + text;
+      var lines = doc.splitTextToSize(prefix, pageW - margin * 2 - 8);
+      doc.text(lines, margin + 8, y);
+      y += lines.length * lh + lh * 0.4;
+    }
+
+    doc.setFontSize(20);
+    doc.setTextColor(13, 124, 116);
+    doc.text(title, margin, y);
+    y += lh * 2;
+    doc.setFontSize(10);
+    doc.setTextColor(100, 116, 139);
+    body(new Date().toLocaleDateString() + '  ·  ' + fmt(elapsed()) + '  ·  ' + m.words + ' words');
+
+    if (m.keywords.length) {
+      heading('Key terms');
+      body(m.keywords.map(function (k) { return k.word; }).join(', '));
+    }
+
+    m.sections.forEach(function (sec) {
+      heading(fmt(sec.start) + ' · ' + sec.title);
+      sec.points.forEach(function (u) { bullet(u.text, u.flag); });
+    });
+
+    if (m.defs.length) {
+      heading('Definitions');
+      m.defs.forEach(function (u) { bullet(u.text, false); });
+    }
+
+    if (m.todos.length) {
+      heading('Reminders');
+      m.todos.forEach(function (u) { bullet('[ ] ' + u.text, false); });
+    }
+
+    heading('Full transcript');
+    segments.forEach(function (s) {
+      var lines = doc.splitTextToSize('[' + fmt(s.t) + '] ' + effective(s), pageW - margin * 2);
+      doc.text(lines, margin, y);
+      y += lines.length * lh + lh * 0.3;
+    });
+
+    download(name + '.pdf', doc.output('blob'));
+    toast('Downloaded ' + name + '.pdf');
+    hideNotice();
+  }
+
+  function toDocx() {
+    if (!segments.length) { setStatus('There are no notes to download yet.', true); return; }
+    var m = model || buildModel();
+    var title = $('title').value.trim() || 'Lecture notes';
+    var name = ($('title').value.trim() || 'lecture-notes').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'lecture-notes';
+
+    var children = [];
+    children.push(new docx.Paragraph({ text: title, heading: docx.HeadingLevel.TITLE }));
+    children.push(new docx.Paragraph({ text: new Date().toLocaleDateString() + ' · ' + fmt(elapsed()) + ' · ' + m.words + ' words' }));
+
+    if (m.keywords.length) {
+      children.push(new docx.Paragraph({ text: 'Key terms', heading: docx.HeadingLevel.HEADING_1 }));
+      children.push(new docx.Paragraph({ text: m.keywords.map(function (k) { return k.word; }).join(', ') }));
+    }
+
+    m.sections.forEach(function (sec) {
+      children.push(new docx.Paragraph({ text: fmt(sec.start) + ' · ' + sec.title, heading: docx.HeadingLevel.HEADING_1 }));
+      sec.points.forEach(function (u) {
+        children.push(new docx.Paragraph({ text: (u.flag ? '\u2605 ' : '- ') + u.text, bullet: { level: 0 } }));
+      });
+    });
+
+    if (m.defs.length) {
+      children.push(new docx.Paragraph({ text: 'Definitions', heading: docx.HeadingLevel.HEADING_1 }));
+      m.defs.forEach(function (u) { children.push(new docx.Paragraph({ text: '- ' + u.text, bullet: { level: 0 } })); });
+    }
+
+    if (m.todos.length) {
+      children.push(new docx.Paragraph({ text: 'Reminders', heading: docx.HeadingLevel.HEADING_1 }));
+      m.todos.forEach(function (u) { children.push(new docx.Paragraph({ text: '[ ] ' + u.text, bullet: { level: 0 } })); });
+    }
+
+    children.push(new docx.Paragraph({ text: 'Full transcript', heading: docx.HeadingLevel.HEADING_1 }));
+    segments.forEach(function (s) {
+      children.push(new docx.Paragraph({ text: '[' + fmt(s.t) + '] ' + effective(s) }));
+    });
+
+    var docxDoc = new docx.Document({
+      sections: [{ properties: {}, children: children }]
+    });
+
+    docx.Packer.toBlob(docxDoc).then(function (blob) {
+      download(name + '.docx', blob);
+      toast('Downloaded ' + name + '.docx');
+      hideNotice();
+    });
+  }
+
   /* ---------- recording ---------- */
   function addSegment(text) {
     text = (text || '').trim();
@@ -1690,8 +1824,8 @@
     setStatus('Imported ' + units.length + ' ' + plural(units.length, 'sentence', 'sentences') + ' — notes are ready.');
   }
 
-  function download(name, text) {
-    var blob = new Blob([text], { type: 'text/markdown;charset=utf-8' });
+  function download(name, data) {
+    var blob = data instanceof Blob ? data : new Blob([data], { type: 'text/markdown;charset=utf-8' });
     var a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     a.download = name;
@@ -1859,6 +1993,10 @@
     toast('Downloaded ' + name + '.md');
     hideNotice();
   });
+
+  $('pdfBtn').addEventListener('click', toPdf);
+
+  $('docxBtn').addEventListener('click', toDocx);
 
   $('clearBtn').addEventListener('click', function () {
     var b = $('clearBtn');
